@@ -3,11 +3,16 @@
 Pouziti:
   * v Blenderu: Text Editor -> otevrit tento soubor -> nastavit BES_PATH -> Run Script
   * z prikazove radky:  blender --python bes_import.py --"C:/.../LEVELS/RADIORELAY/04.BES"
+  * LOD po importu (Python konzole, `ns` = runpy.run_path(...) nebo modul):
+      show_lod(level=1)      # vsude 1. LOD;  level=0 zpet na zaklad
+      show_lod()             # podle vzdalenosti od scene.camera, jako engine (Lod=20/60/-1 m)
 
 Stoji na addonu `vietcong_bes` (scripts/addons/vietcong_bes) a opravuje jeho slabiny:
   0. Vertexy: addon pozna skeletalni vertex podle velikosti (40 B = 1 vaha), jenze 40 B ma
      i bezny vertex se 2 UV sadami (FVF 0x212). Pak cte normalu i UV posunute o 8 B
      a jako "UVMap" importuje ve skutecnosti druhou sadu. Tady rozhoduje FVF typ pozice.
+  0b. Transformace: BES uklada svetove matice, addon je bere jako lokalni vuci rodici ->
+     vnorene LOD (bunkr -> lod_01 -> lod_02) lezi o 1x, 2x polohu rodice vedle.
   1. Textury: addon hleda rekurzivne a bere prvni shodu jmena. Kdyz je model mimo slozku
      levelu (napr. meshes/04.BES), najde TLT_RADIO_ZEM.DDS v LEVELS/CONQUEST_F (krater)
      misto LEVELS/RADIORELAY. Tady se kandidati se stejnym jmenem rozhoduji podle toho,
@@ -386,6 +391,17 @@ def patch_importer(imp, tex_map, log):
                     setattr(cls, '_create_material', orig_mat))
 
 
+def fix_world_transforms(objs):
+    """Transform v BES je svetovy (3ds Max node TM), addon ho dava jako lokalni vuci rodici.
+    U deti Scene Root (identita) je to jedno, ale vnorene LOD (bunkr -> lod_01 -> lod_02)
+    pak lezi o 1x, 2x polohu rodice vedle. Svetova matice = matrix_basis ze souboru."""
+    world = {o: o.matrix_basis.copy() for o in objs}
+    for o in objs:
+        p = o.parent
+        if p is not None and p in world:
+            o.matrix_parent_inverse = world[p].inverted_safe()
+
+
 def child_collection(parent, name):
     c = bpy.data.collections.new(name)
     parent.children.link(c)
@@ -446,6 +462,7 @@ def _import(imp, rd, path, base, root):
         raise RuntimeError(f"Import {path} selhal")
 
     new = [o for o in bpy.data.objects if o not in before]
+    fix_world_transforms(new)
     lod = child_collection(main, f"{base} – LOD")
     helpers = child_collection(main, f"{base} – kolize a pomocné")
     n_lod = n_help = 0
@@ -477,6 +494,73 @@ def _import(imp, rd, path, base, root):
     log.append(f"  objektu {len(new)}, LOD {n_lod}, kolize/pomocne {n_help} (skryte)")
     print("\n".join(log))
     return main, log
+
+
+# --- LOD -------------------------------------------------------------------
+def lod_chains(main):
+    """[(base, [base, lod1, lod2, ...], [vzdalenosti])] pro objekty s Lod= v User Defined Properties.
+    Dalsi uroven je dite s Islod=1, vzdalenosti v metrech, -1 = do nekonecna."""
+    chains = []
+    for o in main.all_objects:
+        if o.get('bes_is_lod') or o.get('bes_is_auxiliary') or o.get('bes_is_collision'):
+            continue
+        dists = []
+        for line in str(o.get('bes_user_properties', '')).splitlines():
+            k, _, v = line.partition('=')
+            if k.strip().lower() == 'lod':
+                try:
+                    dists.append(float(v))
+                except ValueError:
+                    pass
+        if not dists:
+            continue
+        chain = [o]
+        while True:
+            nxt = [c for c in chain[-1].children if c.get('bes_is_lod')]
+            if not nxt:
+                break
+            chain.append(nxt[0])
+        chains.append((o, chain, dists))
+    return chains
+
+
+def show_lod(main=None, level=None, camera=None):
+    """Zobrazi jednu LOD uroven kazdeho retezu, ostatni skryje (viewport i render).
+    level=0 zakladni model, 1, 2 ... (pri nedostatku urovni posledni dostupna).
+    level=None: podle vzdalenosti od kamery (scene.camera nebo `camera`) jako engine.
+    Vraci {objekt: zvolena uroven}."""
+    vl = bpy.context.view_layer
+    scene = bpy.context.scene
+    if main is None:
+        main = next(c for c in scene.collection.children if c.name.startswith('BES '))
+    cam = camera or scene.camera
+    chosen = {}
+    any_lod = False
+    for base, chain, dists in lod_chains(main):
+        if level is None:
+            if cam is None:
+                raise RuntimeError("show_lod(level=None) potrebuje kameru")
+            d = (base.matrix_world.translation - cam.matrix_world.translation).length
+            lvl = next((i for i, lim in enumerate(dists) if lim < 0 or d < lim), len(dists) - 1)
+        else:
+            lvl = level
+        lvl = min(lvl, len(chain) - 1)
+        chosen[base.name] = lvl
+        any_lod |= lvl > 0
+        for i, o in enumerate(chain):
+            show = i == lvl
+            o.hide_render = not show
+            try:
+                o.hide_set(not show, view_layer=vl)
+            except RuntimeError:
+                pass        # objekt ve vyrazene kolekci
+    for c in main.children:
+        if c.name.endswith('– LOD'):
+            c.hide_render = not any_lod
+            lc = find_layer_collection(vl.layer_collection, c)
+            if lc:
+                lc.hide_viewport = not any_lod
+    return chosen
 
 
 def main_cli():

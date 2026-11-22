@@ -30,12 +30,36 @@ Vysledek je kolekce `BES <jmeno>` s podkolekcemi `<jmeno> – LOD` a
 skryte okem v Outlineru a vyrazene z renderu, objekty kolizi se kresli dratove.
 Vlastnosti `bes_*` na objektech a materialech zustavaji kvuli zpetnemu exportu.
 
+## LOD
+
+LOD je v BES retez: zakladni objekt ma v User Defined Properties `Lod=20`, `Lod=60`,
+`Lod=-1` (vzdalenosti prepnuti v metrech, `-1` = dal uz nic), dalsi urovne jsou jeho
+deti s `Islod=1` (`bunkr_02` → `bunkr_02_lod_01` → `bunkr_02_lod_2`).
+
+```python
+show_lod(level=1)   # vsude 1. LOD (kde neni, posledni dostupny); level=0 zpet
+show_lod()          # podle vzdalenosti od scene.camera, jako engine
+```
+
+Prepina viewport i render (hide_set + hide_render) a podle potreby zobrazi kolekci LOD.
+
+## Stiny (LDT)
+
+Predpocitane stiny/lightmapy nejsou v BES, ale v datech levelu:
+`LEVELS\<level>\DATA\<scena>\LDT\*.LDT` (soubor na objekt, jmeno `XXXXXXXX_YYYYYYYYYYYYYYYY.LDT`)
+a `SHADOWS.SHM`. Format zatim neni rozlusteny a skript je nenacita.
+RADIORELAY v teto kopii dat slozku LDT nema.
+
 ## Co opravuje na addonu
 
 1. **Vertexy se 2 UV sadami.** Addon rozpoznava skeletalni vertex podle velikosti
    (40 B = 1 vaha). Stejnou velikost ma obycejny vertex se dvema UV sadami (FVF `0x212`),
    takze se normala i UV ctou posunute a jako `UVMap` vznikne ve skutecnosti druha sada.
    Skript rozhoduje podle FVF typu pozice (`D3DFVF_XYZ` = bez vah).
+1b. **Transformace vnorenych objektu.** BES uklada svetove matice (3ds Max node TM),
+   addon je pouzije jako lokalni vuci rodici. U deti `Scene Root` (identita) se nic nestane,
+   ale vnorene LOD pak lezi o 1×, 2× polohu rodice vedle (bunkr v z≈30, LOD1 v z≈60, LOD2 v z≈90).
+   Skript nastavi `matrix_parent_inverse` tak, aby svetova matice odpovidala souboru.
 2. **Textury z ciziho levelu.** Addon hleda rekurzivne a bere prvni shodu jmena.
    U modelu mimo slozku levelu tak `TLT_RADIO_ZEM.DDS` prijde z `LEVELS\CONQUEST_F`
    (krater) misto z `LEVELS\RADIORELAY`. Skript ze stejnojmennych souboru bere ten ze
