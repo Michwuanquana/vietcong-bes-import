@@ -2,7 +2,7 @@
 
 Pouziti:
   * v Blenderu: Text Editor -> otevrit tento soubor -> nastavit BES_PATH -> Run Script
-  * z prikazove radky:  blender --python tools/bes_import.py -- "C:/.../LEVELS/RADIORELAY/04.BES"
+  * z prikazove radky:  blender --python bes_import.py --"C:/.../LEVELS/RADIORELAY/04.BES"
 
 Stoji na addonu `vietcong_bes` (scripts/addons/vietcong_bes) a opravuje jeho slabiny:
   0. Vertexy: addon pozna skeletalni vertex podle velikosti (40 B = 1 vaha), jenze 40 B ma
